@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { realpath } from 'node:fs/promises'
 import { fail } from './router.mjs'
 
 const presentation = mode => mode === 'ptc' ? 'ptc' : 'native'
@@ -11,7 +12,7 @@ function requestedConfig(spec, explicitEffort) {
 }
 
 /** No provider credentials or inherited conversation are copied into these sessions. */
-export function createRuntime(ctx) {
+export function createRuntime(ctx, { workspace } = {}) {
   return {
     async capabilities() {
       const groups = [], failures = []
@@ -25,9 +26,10 @@ export function createRuntime(ctx) {
           groups.push({ provider: provider.id, name: provider.name, models })
         } catch { failures.push({ provider: provider.id, error: 'Catalog unavailable; inspect local DSH diagnostics' }) }
       }
-      return { groups, failures, agent_presets: await ctx.agentPresets.list(), ptc_available: Boolean(ctx.get('ptcRuntime')) }
+      return { groups, failures, agent_presets: await ctx.agentPresets.list(), ptc_available: Boolean(ctx.get('ptcRuntime')), ...(workspace ? { task_workspace: { id: workspace.id, title: workspace.title, path: workspace.path } } : {}) }
     },
     async validate(spec) {
+      if (workspace && await realpath(spec.cwd) !== workspace.path) fail('WORKSPACE_MISMATCH', 'Task cwd must equal task_workspace.path from router_capabilities; address other projects by explicit paths')
       if (!ctx.llm.listProviders().some(p => p.id === spec.provider)) fail('UNKNOWN_PROVIDER', 'provider is not registered in this DSH instance')
       if (!(await ctx.llm.listModels(spec.provider)).some(m => m.id === spec.model)) fail('UNKNOWN_MODEL', 'Exact model ID is not advertised by this provider; call router_capabilities')
       const info = await ctx.llm.resolveModelInfo(spec.provider, spec.model)
@@ -39,7 +41,7 @@ export function createRuntime(ctx) {
       const explicitEffort = info.reasoning !== undefined
       const resolved = await ctx.llm.resolveCallConfig(requestedConfig(spec, explicitEffort))
       if (!sameRoute(spec, resolved, explicitEffort)) fail('ROUTE_MISMATCH', 'Resolved provider, model or reasoning effort differs from the request')
-      return { provider: resolved.provider, model: resolved.model, reasoning_effort: effortOf(resolved), reasoning_control: explicitEffort ? 'explicit' : 'unsupported', mode: spec.mode, tool_presentation: presentation(spec.mode), agent_preset: preset.id }
+      return { provider: resolved.provider, model: resolved.model, reasoning_effort: effortOf(resolved), reasoning_control: explicitEffort ? 'explicit' : 'unsupported', mode: spec.mode, tool_presentation: presentation(spec.mode), agent_preset: preset.id, ...(workspace ? { workspace_id: workspace.id, workspace_title: workspace.title } : {}) }
     },
     async run(record, signal, progress) {
       const spec = record.requested
@@ -96,6 +98,13 @@ export function createRuntime(ctx) {
         if (signal.aborted) onAbort()
         await progress({ session_id: handle.agent.id })
         signal.throwIfAborted()
+        // Native workspace membership requires an identical canonical cwd.
+        // Do not launch a paid turn until attachment has durably succeeded.
+        if (workspace) {
+          await workspace.attachSession(handle.agent.id)
+          await progress({ workspace_id: workspace.id, workspace_title: workspace.title })
+          signal.throwIfAborted()
+        }
         // UserMessage's public value shape; no runtime package dependency is needed.
         handle.agent.followup(Object.freeze({ id: randomUUID(), role: 'user', content: Object.freeze([Object.freeze({ type: 'text', text: spec.prompt })]), source: Object.freeze({ kind: 'user' }) }))
         await handle.agent.whenIdle()

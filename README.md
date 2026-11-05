@@ -16,7 +16,7 @@
 ## 要求
 
 - Node.js >= 22.13，无第三方运行时依赖。
-- DSH 提供 `webServer`、`agents.create`、`agentPresets`、原生 LLM 注册表和 `tools.presentAs`。
+- DSH 提供 `webServer`、`agents.create`、`agentPresets`、`workspaceRegistry`、原生 LLM 注册表和 `tools.presentAs`。
 - PTC 任务还需要 DSH 的 PTC runtime。
 - Hermes 支持带 Authorization header 的 HTTP MCP 服务。
 
@@ -30,18 +30,27 @@ npm run check
 npm pack
 ```
 
-通过当前 DSH 版本的官方插件安装命令或界面，安装生成的 `hermes-dsh-distributor-0.1.2.tgz`，然后启用插件。不同宿主的 profile 和 CLI 入口不同，请使用该宿主的官方入口。
+通过当前 DSH 版本的官方插件安装命令或界面，安装生成的 `hermes-dsh-distributor-0.1.3.tgz`，然后启用插件。不同宿主的 profile 和 CLI 入口不同，请使用该宿主的官方入口。
 
 插件启动读取 `~/.dsh/integrations/hermes-task-router/config.json`：
 
 ```json
 {
-  "allowedRoots": ["/absolute/path/to/workspace"],
+  "allowedRoots": ["/absolute/path/to/Hermes"],
+  "workspacePath": "/absolute/path/to/Hermes",
   "maxConcurrent": 2
 }
 ```
 
 先创建上述配置并使用真实存在的目录；默认没有授权目录，因此拒绝任务。插件自动生成同目录下的 `token`（0600），任务回执存入 `state/`。不要提交这些运行数据或供应商凭据。
+
+## Hermes 工作区归属
+
+配置 `workspacePath` 后，新任务会话在首个模型请求前通过 DSH 原生接口挂到名为 **Hermes** 的工作区。目录必须预先存在；若该目录已属于其他名称的工作区，启动会拒绝，不会重命名其他项目。省略该配置时保持按请求 cwd 执行的旧行为。
+
+DSH 工作区不是独立标签：会话 cwd 必须等于工作区的规范路径。因此调用方必须先读取 `router_capabilities.task_workspace.path`，并把它作为 `router_start.cwd`；允许根内但不同于工作区的 cwd 返回 `WORKSPACE_MISMATCH`，根外或不存在的目录按原准入规则拒绝，不会偷偷改变目录。其他项目请在任务内容里使用明确的项目绝对路径。旧任务、旧会话分组均不迁移。
+
+挂接失败不会开始模型调用；回执区分 `session_id` 和成功挂接后的 `workspace_id`。原生会话日志与工作区记录不是同一事务，进程崩溃仍可能留下无完整日志的工作区条目，取消/释放 Agent 不等于删除会话。
 
 ## Hermes MCP 配置
 
@@ -70,7 +79,7 @@ mcp_servers:
 {
   "request_id": "design-review-001",
   "prompt": "分析这个项目的设计问题，只给建议，不修改文件。",
-  "cwd": "/absolute/path/to/workspace",
+  "cwd": "/absolute/path/to/Hermes",
   "provider": "EXACT_PROVIDER_ID",
   "model": "EXACT_MODEL_ID",
   "reasoning_effort": "high",

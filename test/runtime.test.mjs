@@ -1,6 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createRuntime } from '../src/runtime.mjs'
+import { realpath } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 
 function fixture(overrides = {}) {
   const handlers = new Map(), log = { creates: [], mounts: [], modes: [], disposed: 0, canceled: [], prompts: [] }
@@ -156,4 +158,53 @@ test('abort before creation does not start work; large text output is bounded', 
   const result = await large.runtime.run(large.record, new AbortController().signal, async () => {})
   assert.equal(result.output.length, 262144)
   assert.equal(result.output_truncated, true)
+})
+
+async function workspaceFixture(attach) {
+  const f = fixture(), path = await realpath(tmpdir())
+  const workspace = { id: 'workspace-hermes', title: 'Hermes', path, attachSession: attach ?? (async id => { f.log.attached = id; assert.equal(f.log.prompts.length, 0) }) }
+  f.spec.cwd = path
+  f.record.resolved.cwd = path
+  f.runtime = createRuntime(f.ctx, { workspace })
+  return { ...f, workspace }
+}
+test('configured Hermes workspace is advertised and attached before execution without changing cwd', async () => {
+  const f = await workspaceFixture(), updates = []
+  assert.deepEqual((await f.runtime.capabilities()).task_workspace, { id: f.workspace.id, title: 'Hermes', path: f.workspace.path })
+  assert.equal((await f.runtime.validate(f.spec)).workspace_id, f.workspace.id)
+  await f.runtime.run(f.record, new AbortController().signal, async patch => updates.push(patch))
+  assert.equal(f.log.attached, 'session-owned')
+  assert.equal(f.log.creates[0].meta.cwd, f.workspace.path)
+  assert(updates.some(p => p.workspace_id === f.workspace.id))
+})
+test('a different cwd fails closed before creating a Hermes agent', async () => {
+  const f = await workspaceFixture()
+  f.spec.cwd = '/'
+  await assert.rejects(f.runtime.run(f.record, new AbortController().signal, async () => {}), { code: 'WORKSPACE_MISMATCH' })
+  assert.equal(f.log.creates.length, 0)
+})
+test('workspace attachment failure disposes the session without launching a turn', async () => {
+  const f = await workspaceFixture(async () => { throw new Error('workspace persistence failed') })
+  await assert.rejects(f.runtime.run(f.record, new AbortController().signal, async () => {}), /workspace persistence failed/)
+  assert.equal(f.log.prompts.length, 0)
+  assert.equal(f.log.disposed, 1)
+})
+test('cancellation during workspace attachment cannot launch a paid turn', async () => {
+  const controller = new AbortController()
+  const f = await workspaceFixture(async () => controller.abort())
+  await assert.rejects(f.runtime.run(f.record, controller.signal, async () => {}), { name: 'AbortError' })
+  assert.equal(f.log.prompts.length, 0)
+  assert.equal(f.log.disposed, 1)
+})
+
+test('workspace evidence write failure prevents execution after successful attachment', async () => {
+  const f = await workspaceFixture(), updates = []
+  await assert.rejects(f.runtime.run(f.record, new AbortController().signal, async patch => {
+    updates.push(patch)
+    if (patch.workspace_id) throw new Error('receipt write failed')
+  }), /receipt write failed/)
+  assert(updates.some(p => p.session_id === 'session-owned'))
+  assert.equal(f.log.attached, 'session-owned')
+  assert.equal(f.log.prompts.length, 0)
+  assert.equal(f.log.disposed, 1)
 })

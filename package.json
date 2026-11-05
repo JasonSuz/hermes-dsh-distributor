@@ -1,7 +1,7 @@
 {
   "name": "hermes-dsh-distributor",
   "repository": { "type": "git", "url": "https://github.com/JasonSuz/hermes-dsh-distributor.git" },
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Authenticated Hermes task dispatch with exact DSH model, reasoning effort and execution mode",
   "type": "module",
   "main": "./index.mjs",

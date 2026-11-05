@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, access, readFile } from 'node:fs/promises'
+import { mkdtemp, access, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { apply, ROUTE, name, VERSION } from '../index.mjs'
@@ -59,4 +59,24 @@ test('nonabsolute isolated storage is rejected before any route is mounted', asy
   const routes = new Map(), ctx = context(routes)
   await assert.rejects(apply(ctx, { home: 'relative' }), /absolute path/)
   assert.equal(routes.size, 0)
+})
+
+test('workspace configuration registers the dedicated Hermes path through the native registry', async t => {
+  const home = await mkdtemp(join(tmpdir(), 'hermes-workspace-config-'))
+  await writeFile(join(home, 'config.json'), JSON.stringify({ workspacePath: home, allowedRoots: [home] }))
+  const ctx = context(new Map()), calls = []
+  ctx.workspaceRegistry = { create: async (path, title) => { calls.push({ path, title }); return { path, title, id: 'hermes-id' } } }
+  t.after(() => ctx.dispose())
+  await apply(ctx, { home })
+  assert.deepEqual(calls, [{ path: home, title: 'Hermes' }])
+})
+test('invalid workspace configuration and differently named existing workspace fail without mounting routes', async () => {
+  for (const workspacePath of ['relative', 42, '/dedicated/hermes']) {
+    const home = await mkdtemp(join(tmpdir(), 'hermes-workspace-invalid-'))
+    await writeFile(join(home, 'config.json'), JSON.stringify({ workspacePath }))
+    const routes = new Map(), ctx = context(routes)
+    ctx.workspaceRegistry = { create: async path => ({ path, title: 'Unrelated Project', id: 'other' }) }
+    await assert.rejects(apply(ctx, { home }), /absolute existing directory|differently named workspace/)
+    assert.equal(routes.size, 0)
+  }
 })
