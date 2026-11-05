@@ -1,0 +1,12 @@
+artifacts/
+node_modules/
+.DS_Store
+*.log
+.env
+.env.*
+!.env.example
+token
+state/
+config.json
+*.key
+*.pem
