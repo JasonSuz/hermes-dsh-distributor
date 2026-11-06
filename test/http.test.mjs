@@ -45,7 +45,7 @@ test('stateless initialize, ping, id zero and discovery', async t => {
   assert.equal(init.status, 200)
   assert.equal(init.json.id, 0)
   assert.equal(init.json.result.protocolVersion, '2024-11-05')
-  assert.equal(init.json.result.serverInfo.version, '0.1.3')
+  assert.equal(init.json.result.serverInfo.version, '0.1.4')
   assert.equal(init.json.result.serverInfo.name, 'hermes-dsh-distributor')
   assert.deepEqual((await request(rpc('ping'))).json.result, {})
   const discovery = (await request(rpc('tools/list'))).json.result.tools

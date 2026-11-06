@@ -1,7 +1,7 @@
 {
   "name": "hermes-dsh-distributor",
   "repository": { "type": "git", "url": "https://github.com/JasonSuz/hermes-dsh-distributor.git" },
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Authenticated Hermes task dispatch with exact DSH model, reasoning effort and execution mode",
   "type": "module",
   "main": "./index.mjs",
@@ -10,5 +10,13 @@
   "scripts": { "test": "node --test", "check": "node --check index.mjs && node --check src/router.mjs && node --check src/runtime.mjs && node --check src/http.mjs" },
   "engines": { "node": ">=22.13.0" },
   "dsh": { "bundle": { "patch": "./cordis.patch.yml" } },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tool-executor-native": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-tool-executor-ptc": "0.2.2-rc.1"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-tool-executor-native": { "optional": true },
+    "@deepseek-ai/dsh-tool-executor-ptc": { "optional": true }
+  },
   "license": "UNLICENSED"
 }

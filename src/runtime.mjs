@@ -12,7 +12,9 @@ function requestedConfig(spec, explicitEffort) {
 }
 
 /** No provider credentials or inherited conversation are copied into these sessions. */
-export function createRuntime(ctx, { workspace } = {}) {
+export function createRuntime(ctx, { workspace, loadExecutor = async mode => mode === 'ptc'
+  ? (await import('@deepseek-ai/dsh-tool-executor-ptc')).PtcExecutor
+  : (await import('@deepseek-ai/dsh-tool-executor-native')).NativeToolExecutor } = {}) {
   return {
     async capabilities() {
       const groups = [], failures = []
@@ -67,7 +69,14 @@ export function createRuntime(ctx, { workspace } = {}) {
           setup: async (agentCtx, agent) => {
             await ctx.agentPresets.mount(agentCtx, spec.agent_preset)
             // This is scoped to this new agent, never a global GUI mode switch.
-            await agentCtx.tools.presentAs(presentation(spec.mode))
+            if (typeof agentCtx.tools.setExecutor === 'function') {
+              const Executor = await loadExecutor(presentation(spec.mode))
+              agentCtx.tools.setExecutor(new Executor(agentCtx))
+            } else if (typeof agentCtx.tools.presentAs === 'function') {
+              await agentCtx.tools.presentAs(presentation(spec.mode))
+            } else {
+              fail('EXECUTOR_UNAVAILABLE', 'DSH exposes neither setExecutor nor the legacy presentAs API')
+            }
             agentCtx.on('agent/request', async (_payload, next) => {
               const proposed = await next()
               if (!sameRoute(spec, proposed, explicitEffort)) fail('ROUTE_MISMATCH', 'A runtime hook attempted to change the requested model route')

@@ -131,7 +131,7 @@ export function createRpcHandler(service, { token } = {}) {
     }
     if (input.method === 'initialize') {
       if (!only(params, ['protocolVersion', 'capabilities', 'clientInfo']) || (Object.hasOwn(params, 'protocolVersion') && typeof params.protocolVersion !== 'string') || (Object.hasOwn(params, 'capabilities') && !object(params.capabilities)) || (Object.hasOwn(params, 'clientInfo') && !object(params.clientInfo))) return fail(-32602, 'Invalid params')
-      return success({ protocolVersion: '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'hermes-dsh-distributor', version: '0.1.3' } })
+      return success({ protocolVersion: '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'hermes-dsh-distributor', version: '0.1.4' } })
     }
     if (input.method === 'ping') {
       if (Object.keys(params).length) return fail(-32602, 'Invalid params')

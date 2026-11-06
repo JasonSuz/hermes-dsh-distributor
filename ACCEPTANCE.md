@@ -18,6 +18,12 @@ The implementation before its public package rename was tested with real Claude 
 
 These earlier results establish the inherited implementation behavior. Version 0.1.3 of the renamed package was subsequently installed and separately verified: 53 automated tests and syntax checks passed; a real private remote MCP request created and completed a Codex task in the configured existing Hermes workspace; native workspace membership was read back; another allowed cwd was rejected before execution; prior receipts stayed readable without replay. Health reported the renamed package identity and version, and the private tunnel's identity check was migrated accordingly. This new workspace check used direct authenticated MCP calls from the Hermes machine, not another classic Hermes CLI conversation.
 
+## DSH 0.2.2-rc.1 executor repair (0.1.4)
+
+The shipped host removed `tools.presentAs`. The adapter now uses scoped `tools.setExecutor` with the host's official NativeToolExecutor / PtcExecutor; a legacy API branch remains covered by mocks, not a promise of universal host-version support. Executor import/setup failures stop before followup and never downgrade the mode.
+
+55 tests and syntax checks passed. The installed package's health reported 0.1.4. Two isolated local authenticated MCP smoke tasks completed using the real Codex Sol route with `high`: standard had native header evidence; PTC had run_code-only header evidence and a completed real run_code invocation. Both attached to the configured Hermes workspace. No business handoff task was replayed. These smoke calls validate the actual host module loader, not only injected executor fixtures. After reconnecting the existing private relay, authenticated direct MCP calls from the Hermes machine also read capabilities and both completed smoke receipts; the original failed business receipt remained failed and was not replayed. This remote readback was not a fresh Hermes CLI conversation or a persistent gateway inventory verification.
+
 ## Limits of the evidence
 
 - Runtime mocks and real local HTTP tests do not simulate every provider or production crash.

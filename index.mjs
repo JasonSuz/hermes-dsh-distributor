@@ -8,7 +8,7 @@ import { createRpcHandler } from './src/http.mjs'
 
 export const name = 'hermes-dsh-distributor'
 export const inject = ['webServer', 'agents', 'llm', 'agentPresets', 'tools', 'workspaceRegistry']
-export const VERSION = '0.1.3'
+export const VERSION = '0.1.4'
 export const ROUTE = '/mcp/task-router/v1'
 export async function apply(ctx, options = {}) {
   const home = options.home ?? join(homedir(), '.dsh', 'integrations', 'hermes-task-router')

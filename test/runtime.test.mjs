@@ -39,15 +39,16 @@ function fixture(overrides = {}) {
     agents: {
       async create(options) {
         log.creates.push(options)
-        const agentCtx = { tools: { presentAs: mode => log.modes.push(mode) }, on: (name, fn) => handlers.set(name, fn) }
+        const agentCtx = { tools: overrides.legacy ? { presentAs: mode => log.modes.push(mode) } : { setExecutor: executor => log.modes.push(executor.mode) }, on: (name, fn) => handlers.set(name, fn) }
         await options.setup(agentCtx, agent)
         return { agent, dispose: async () => { log.disposed++ } }
       },
     },
   }
-  const runtime = createRuntime(ctx)
+  const loadExecutor = async mode => { if (overrides.executorError) throw overrides.executorError; return class { constructor(scope) { assert(scope.tools); this.mode = mode } } }
+  const runtime = createRuntime(ctx, { loadExecutor })
   const record = { requested: spec, resolved: { cwd: '/approved/workspace' } }
-  return { runtime, ctx, spec, record, log }
+  return { runtime, ctx, spec, record, log, loadExecutor }
 }
 
 test('catalog uses actual provider registry, exact models and supported efforts', async () => {
@@ -113,6 +114,17 @@ test('standard mode uses native presentation, not a PTC prompt imitation', async
   assert.deepEqual(f.log.modes, ['native'])
   assert.equal(result.observed[0].tool_presentation, 'native')
 })
+test('legacy hosts keep scoped presentAs without loading new executor packages', async () => {
+  const f = fixture({ legacy: true, executorError: new Error('must not import') })
+  await f.runtime.run(f.record, new AbortController().signal, async () => {})
+  assert.deepEqual(f.log.modes, ['ptc'])
+})
+test('executor loading failure cannot silently downgrade or launch a task', async () => {
+  const f = fixture({ executorError: new Error('executor module unavailable') })
+  await assert.rejects(f.runtime.run(f.record, new AbortController().signal, async () => {}), /executor module unavailable/)
+  assert.equal(f.log.prompts.length, 0)
+  assert.deepEqual(f.log.modes, [])
+})
 test('runtime hook route drift is rejected before model request evidence', async () => {
   const f = fixture({ proposed: { provider: 'wrong', model: 'fallback', reasoningEffort: 'high' } })
   await assert.rejects(f.runtime.run(f.record, new AbortController().signal, async () => {}), { code: 'ROUTE_MISMATCH' })
@@ -165,7 +177,7 @@ async function workspaceFixture(attach) {
   const workspace = { id: 'workspace-hermes', title: 'Hermes', path, attachSession: attach ?? (async id => { f.log.attached = id; assert.equal(f.log.prompts.length, 0) }) }
   f.spec.cwd = path
   f.record.resolved.cwd = path
-  f.runtime = createRuntime(f.ctx, { workspace })
+  f.runtime = createRuntime(f.ctx, { workspace, loadExecutor: f.loadExecutor })
   return { ...f, workspace }
 }
 test('configured Hermes workspace is advertised and attached before execution without changing cwd', async () => {

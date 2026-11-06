@@ -15,8 +15,9 @@
 
 ## 要求
 
-- Node.js >= 22.13，无第三方运行时依赖。
-- DSH 提供 `webServer`、`agents.create`、`agentPresets`、`workspaceRegistry`、原生 LLM 注册表和 `tools.presentAs`。
+- Node.js >= 22.13；执行器复用宿主提供的 DSH 官方包，不打包另一份宿主核心。
+- DSH 提供 `webServer`、`agents.create`、`agentPresets`、`workspaceRegistry`、原生 LLM 注册表和 scoped Tools 接口。
+- 本版兼容性声明限定 DSH **0.2.2-rc.1**：通过 `tools.setExecutor` 选择宿主官方 `@deepseek-ai/dsh-tool-executor-native` / `@deepseek-ai/dsh-tool-executor-ptc` 导出，不安装另一份核心。执行器为 optional peer，但版本仍参与宿主兼容性校验；升级 DSH 后应重新验证。保留的 `tools.presentAs` 分支仅作旧 API 的防御性适配，模拟测试不代表本版声明支持所有旧宿主。缺少执行器时拒绝执行，绝不降级。
 - PTC 任务还需要 DSH 的 PTC runtime。
 - Hermes 支持带 Authorization header 的 HTTP MCP 服务。
 
@@ -30,7 +31,7 @@ npm run check
 npm pack
 ```
 
-通过当前 DSH 版本的官方插件安装命令或界面，安装生成的 `hermes-dsh-distributor-0.1.3.tgz`，然后启用插件。不同宿主的 profile 和 CLI 入口不同，请使用该宿主的官方入口。
+通过当前 DSH 版本的官方插件安装命令或界面，安装生成的 `hermes-dsh-distributor-0.1.4.tgz`，然后启用插件。不同宿主的 profile 和 CLI 入口不同，请使用该宿主的官方入口。
 
 插件启动读取 `~/.dsh/integrations/hermes-task-router/config.json`：
 
