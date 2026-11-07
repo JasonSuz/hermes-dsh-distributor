@@ -5,14 +5,14 @@ import { createRpcHandler } from '../src/http.mjs'
 
 const token = 'test-only-router-secret'
 const valid = { request_id: 'request-1', prompt: 'Implement a small task', cwd: '/tmp/work', provider: 'subscription', model: 'example-model', reasoning_effort: 'medium', mode: 'standard' }
-async function fixture(t, { remoteAddress, failure } = {}) {
+async function fixture(t, { remoteAddress, failure, readAccess } = {}) {
   const calls = []
   const service = Object.fromEntries(['capabilities', 'start', 'get', 'cancel'].map(name => [name, async args => {
     calls.push([name, args])
     if (failure) throw failure
     return { method: name, args }
   }]))
-  const handler = createRpcHandler(service, { token })
+  const handler = createRpcHandler(service, { token, readAccess })
   const server = http.createServer((req, res) => {
     if (remoteAddress) Object.defineProperty(req.socket, 'remoteAddress', { value: remoteAddress, configurable: true })
     handler(req, res).catch(error => { res.destroy(error) })
@@ -45,7 +45,7 @@ test('stateless initialize, ping, id zero and discovery', async t => {
   assert.equal(init.status, 200)
   assert.equal(init.json.id, 0)
   assert.equal(init.json.result.protocolVersion, '2024-11-05')
-  assert.equal(init.json.result.serverInfo.version, '0.1.4')
+  assert.equal(init.json.result.serverInfo.version, '0.1.5')
   assert.equal(init.json.result.serverInfo.name, 'hermes-dsh-distributor')
   assert.deepEqual((await request(rpc('ping'))).json.result, {})
   const discovery = (await request(rpc('tools/list'))).json.result.tools
@@ -217,4 +217,32 @@ test('aborted body does not call service or crash the request handler', async t 
 
 test('empty or missing configured token fails closed at construction', () => {
   for (const value of [undefined, '', '   ', 12]) assert.throws(() => createRpcHandler({}, { token: value }), /token/i)
+})
+
+test('optional read catalog is authenticated, strictly validated and independent of task execution', async t => {
+  const reads = []
+  const readAccess = { invoke: async (method, args) => { reads.push([method, args]); return { content_is_untrusted: true, items: [] } } }
+  const { request, calls } = await fixture(t, { readAccess })
+  const catalog = (await request(rpc('tools/list'))).json.result.tools
+  assert.equal(catalog.length, 10)
+  for (const entry of catalog.filter(item => item.name.startsWith('dsh_'))) {
+    assert.equal(entry.annotations.readOnlyHint, true)
+    assert.equal(entry.inputSchema.additionalProperties, false)
+  }
+  assert.equal((await request(tool('dsh_workspaces'), { headers: { authorization: null } })).status, 401)
+  assert.equal((await request(tool('dsh_workspaces'), { headers: { origin: 'null' } })).status, 403)
+  assert.equal((await request(tool('dsh_workspaces', { path: '/private' }))).json.error.code, -32602)
+  assert.equal((await request(tool('dsh_messages', { workspace_id: 'w' }))).json.error.code, -32602)
+  assert.equal((await request(tool('dsh_memory_get', { scope: 'memory', id: 'id', offset: -1 }))).json.error.code, -32602)
+  assert.deepEqual(reads, [])
+  const reply = await request(tool('dsh_memory_search', { scope: 'key', workspace_id: 'w', query: 'hello', limit: 2 }))
+  assert.equal(reply.json.result.isError, false)
+  assert.deepEqual(reads, [['memorySearch', { scope: 'key', workspace_id: 'w', query: 'hello', limit: 2 }]])
+  assert.deepEqual(calls, [])
+})
+
+test('read tools are absent and cannot be invoked without explicit configuration', async t => {
+  const { request, calls } = await fixture(t)
+  assert.equal((await request(tool('dsh_workspaces'))).json.error.code, -32602)
+  assert.deepEqual(calls, [])
 })

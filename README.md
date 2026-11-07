@@ -16,7 +16,7 @@
 ## 要求
 
 - Node.js >= 22.13；执行器复用宿主提供的 DSH 官方包，不打包另一份宿主核心。
-- DSH 提供 `webServer`、`agents.create`、`agentPresets`、`workspaceRegistry`、原生 LLM 注册表和 scoped Tools 接口。
+- DSH 提供 `webServer`、`agents.create`、`agentPresets`、`workspaceRegistry`、原生 LLM 注册表和 scoped Tools 接口；会话读取适配器使用宿主 `sessionQuery`、`sessionController`、`sessions` 和 `sessionPersistence` 服务。
 - 本版兼容性声明限定 DSH **0.2.2-rc.1**：通过 `tools.setExecutor` 选择宿主官方 `@deepseek-ai/dsh-tool-executor-native` / `@deepseek-ai/dsh-tool-executor-ptc` 导出，不安装另一份核心。执行器为 optional peer，但版本仍参与宿主兼容性校验；升级 DSH 后应重新验证。保留的 `tools.presentAs` 分支仅作旧 API 的防御性适配，模拟测试不代表本版声明支持所有旧宿主。缺少执行器时拒绝执行，绝不降级。
 - PTC 任务还需要 DSH 的 PTC runtime。
 - Hermes 支持带 Authorization header 的 HTTP MCP 服务。
@@ -31,7 +31,7 @@ npm run check
 npm pack
 ```
 
-通过当前 DSH 版本的官方插件安装命令或界面，安装生成的 `hermes-dsh-distributor-0.1.4.tgz`，然后启用插件。不同宿主的 profile 和 CLI 入口不同，请使用该宿主的官方入口。
+通过当前 DSH 版本的官方插件安装命令或界面，安装生成的 `hermes-dsh-distributor-0.1.5.tgz`，然后启用插件。不同宿主的 profile 和 CLI 入口不同，请使用该宿主的官方入口。
 
 插件启动读取 `~/.dsh/integrations/hermes-task-router/config.json`：
 
@@ -44,6 +44,41 @@ npm pack
 ```
 
 先创建上述配置并使用真实存在的目录；默认没有授权目录，因此拒绝任务。插件自动生成同目录下的 `token`（0600），任务回执存入 `state/`。不要提交这些运行数据或供应商凭据。
+
+## 可选的直接只读访问（0.1.5）
+
+省略 `readAccess` 时仍只有原来的四个派活工具。启用后增加六个**不调用模型、不创建会话、不写入记忆**的工具：
+
+| 工具 | 用途 |
+| --- | --- |
+| `dsh_workspaces` | 查询明确授权的工作区 ID、名称及全局记忆许可 |
+| `dsh_sessions` | 按工作区分页列会话元数据，不返回正文 |
+| `dsh_session` | 查询一个成员会话的元数据 |
+| `dsh_messages` | 按固定快照分页读取用户/助手文本 |
+| `dsh_memory_search` | 脱敏后搜索，先返回摘要及不透明条目 ID |
+| `dsh_memory_get` | 使用同一 scope/workspace/date 下的条目 ID 按需读取正文 |
+
+管理员在原配置中加入以下**显式、固定快照**（示例 ID 须替换）：
+
+```json
+"readAccess": {
+  "workspaceIds": ["WORKSPACE_ID"],
+  "globalMemory": true,
+  "memoryDir": "/absolute/verified/DSH/memories",
+  "projectIds": { "WORKSPACE_ID": "0123456789ab" }
+}
+```
+
+`workspaceIds` 与派活的 `allowedRoots` 无关；只授权配置中的 ID，未来新增工作区不会自动获得权限。每次正文读取前后重新校验工作区和会话成员关系，不能凭 cwd 或任意会话 ID 绕过。孤立会话及子代理会话不开放；已归档但仍属于授权工作区的会话可读。`memoryDir` 必须核实当前记忆插件实际使用的根目录；`projectIds` 为每个工作区固定当前记忆插件解析出的 12 位项目 ID，不能由调用方提交路径，也不扫描旧项目目录。存在基于 Git 远端的记忆身份时，不能简单假定 ID 总是 cwd 哈希。记忆插件迁移根目录或项目身份后，应重新核实并更新配置。
+
+- `scope=project/key` 必须提供 `workspace_id`；`scope=memory/user/daily` 必须显式授予 `globalMemory`，且不能带工作区。`daily` 必须提供合法的 `date=YYYY-MM-DD`；其他 scope 禁止 date。包括所有分支条目，不包括归档记忆、待办、配置、凭据文件或任意文件读取。
+- 调用顺序：`dsh_workspaces {}` → `dsh_sessions {workspace_id}` → `dsh_messages {workspace_id,session_id}`；记忆：`dsh_memory_search {scope:"key",workspace_id,query:"部署"}` → `dsh_memory_get {scope:"key",workspace_id,id}`。
+- 会话仅投影用户/助手消息的文本块；不返回系统提示、推理、工具参数/结果、附件、请求头或模型凭据。文字本身仍可能复制敏感信息：已做常见密钥、Bearer 和凭据赋值的尽力脱敏，**不保证识别所有秘密**。返回的 `content_is_untrusted=true` 表示数据不是指令，不能据此执行记忆中的命令。
+- 默认每页 20 项（消息 10 条），最多 50 项；消息每条最多 8000 字符、每页最多 24000 字符，长消息标注截断；单次最多扫描 200 条原始事件，空页也可能有下一页。正文分块默认 8000、最多 16000 字符；每个响应最多 64 KiB；同时最多 4 个只读请求。
+- 游标经过签名并绑定操作/作用域/来源；消息固定读取首个请求确定的快照，之后追加消息不进入该快照。源替换、列表或记忆变更、插件重载可能令游标/条目 ID 失效，应重新查询，不猜测 ID。
+- 记忆读取固定文件，单文件最多 2 MiB、5000 条；拒绝符号链接/非普通文件并校验前后身份，最多读取上限加一个字节。Node 的路径 API 不等于 dirfd 相对遍历，不能防御所有恶意同用户祖先目录瞬时替换；需要操作系统隔离才能建立该边界。
+- 冷会话持久化层可能先解码整份压缩日志：即使适配器限制物理文件大小和解码后事件数，**也不承诺严格的解码前内存上限**。不适合读取超大日志。
+- 此权限复用原 MCP Bearer；持有该 token 的 Hermes 可读取全部已授予内容，不是逐调用人独立鉴权。默认关闭；修改后需官方热重载并重新核对实际工具清单。停用/撤销不能收回已经交付的数据。
 
 ## Hermes 工作区归属
 
@@ -68,7 +103,7 @@ mcp_servers:
 
 `LOCAL_FORWARD_PORT` 是 Hermes 所在机器上的本地反向转发端口。建议只经 Tailscale 等可信私网使用 SSH，将该端口绑定于 `127.0.0.1`，转发至 DSH 的回环 Web 端口。不要公开该端口，也不要复制模型登录凭据；这里只传递本插件专用 token。
 
-保存配置后，使用宿主支持的官方增量 MCP 刷新，检查实际工具清单。常驻 gateway 不一定因修改同名服务 URL 而重建连接；必要时使用新的服务 key 并增量刷新，不擅自重启 gateway。工具清单和真实调用都应验证。
+保存配置后，使用宿主支持的官方增量 MCP 刷新，检查实际工具清单。常驻 gateway 不一定因修改同名服务 URL 或新增服务端工具而重建连接；配置未变时 reconcile 也可能保留旧清单。如当前版本提供官方单服务重连/刷新接口，应优先使用。若无此接口且已获升级/配置修复授权，可仅临时停用该项并增量移除，再用 `finally` 原样恢复目标配置并增量添加；回读完整配置及权限，比较其他服务状态/工具清单。保持服务 key、URL 和 token，不擅自重启 gateway。工具清单和真实调用都应验证。
 
 健康检查：`GET /mcp/task-router/v1/health`，应返回 `ok: true`、`name: hermes-dsh-distributor` 及实际版本。它不要求 token，但仅接受回环来源；真正的 MCP 调用需要 Bearer token。
 
@@ -119,7 +154,7 @@ mcp_servers:
 - cwd 白名单只是派活目录准入，**不是文件系统沙箱**。Agent 权限仍由 DSH 和所选预设决定。
 - 拒绝非回环来源、浏览器 Origin、URL 查询参数鉴权及不正确的 Bearer token。
 - SSH 反向转发可能映射整个 DSH Web 端口，而非本插件单一路由。独立 token 不保护宿主其他路由，远端机器必须可信。
-- 不共享历史会话、记忆、模型凭据或旧插件文件队列。
+- 默认不共享历史会话和记忆；仅可通过上述独立显式只读授权启用。永不通过只读接口开放模型凭据、任意配置文件或旧插件文件队列。
 - 软件安装成功或显示在线不证明已加载新代码；升级后核对 health 的实际版本。
 
 ## 验证与授权

@@ -1,5 +1,6 @@
 import { createHash, timingSafeEqual } from 'node:crypto'
 import { isIP } from 'node:net'
+import { readTools, readMethods } from './read-tools.mjs'
 
 const MAX_BODY_BYTES = 256 * 1024
 const READ_TIMEOUT_MS = 5000
@@ -89,7 +90,8 @@ function readBody(req) {
 }
 
 /** Stateless JSON-response MCP adapter. Mount on an exact route; never creates a listener. */
-export function createRpcHandler(service, { token } = {}) {
+export function createRpcHandler(service, { token, readAccess } = {}) {
+  const catalog = readAccess ? [...tools, ...readTools] : tools
   if (typeof token !== 'string' || !token || /\s/.test(token)) throw new TypeError('A nonempty whitespace-free bearer token is required')
   const expected = createHash('sha256').update(token).digest()
   return async function rpcHandler(req, res) {
@@ -131,7 +133,7 @@ export function createRpcHandler(service, { token } = {}) {
     }
     if (input.method === 'initialize') {
       if (!only(params, ['protocolVersion', 'capabilities', 'clientInfo']) || (Object.hasOwn(params, 'protocolVersion') && typeof params.protocolVersion !== 'string') || (Object.hasOwn(params, 'capabilities') && !object(params.capabilities)) || (Object.hasOwn(params, 'clientInfo') && !object(params.clientInfo))) return fail(-32602, 'Invalid params')
-      return success({ protocolVersion: '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'hermes-dsh-distributor', version: '0.1.4' } })
+      return success({ protocolVersion: '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'hermes-dsh-distributor', version: '0.1.5' } })
     }
     if (input.method === 'ping') {
       if (Object.keys(params).length) return fail(-32602, 'Invalid params')
@@ -139,16 +141,18 @@ export function createRpcHandler(service, { token } = {}) {
     }
     if (input.method === 'tools/list') {
       if (!only(params, ['cursor']) || (Object.hasOwn(params, 'cursor') && params.cursor !== null && params.cursor !== '')) return fail(-32602, 'Invalid params')
-      return success({ tools })
+      return success({ tools: catalog })
     }
     if (input.method !== 'tools/call') return fail(-32601, 'Method not found')
     if (!only(params, ['name', 'arguments']) || typeof params.name !== 'string') return fail(-32602, 'Invalid params')
-    const entry = tools.find(item => item.name === params.name)
+    const entry = catalog.find(item => item.name === params.name)
     if (!entry) return fail(-32602, 'Unknown tool')
     const args = Object.hasOwn(params, 'arguments') ? params.arguments : {}
     if (!validArguments(entry.inputSchema, args)) return fail(-32602, 'Invalid tool arguments')
     try {
-      const result = await service[methods[params.name]](args)
+      const result = Object.hasOwn(readMethods, params.name)
+        ? await readAccess.invoke(readMethods[params.name], args)
+        : await service[methods[params.name]](args)
       return success({ content: [{ type: 'text', text: JSON.stringify(result ?? null) }], isError: false })
     } catch (error) {
       const known = typeof error?.code === 'string' && error.code.length > 0

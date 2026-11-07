@@ -5,10 +5,13 @@ import { mkdir, readFile, writeFile, lstat } from 'node:fs/promises'
 import { Router, fields } from './src/router.mjs'
 import { createRuntime } from './src/runtime.mjs'
 import { createRpcHandler } from './src/http.mjs'
+import { ReadAccess, validateReadPolicy } from './src/read-access.mjs'
+import { createMemoryReader } from './src/read-memory.mjs'
+import { createSessionReader } from './src/read-sessions.mjs'
 
 export const name = 'hermes-dsh-distributor'
-export const inject = ['webServer', 'agents', 'llm', 'agentPresets', 'tools', 'workspaceRegistry']
-export const VERSION = '0.1.4'
+export const inject = ['webServer', 'agents', 'llm', 'agentPresets', 'tools', 'workspaceRegistry', 'sessionQuery', 'sessionController', 'sessions', 'sessionPersistence']
+export const VERSION = '0.1.5'
 export const ROUTE = '/mcp/task-router/v1'
 export async function apply(ctx, options = {}) {
   const home = options.home ?? join(homedir(), '.dsh', 'integrations', 'hermes-task-router')
@@ -17,7 +20,17 @@ export async function apply(ctx, options = {}) {
   let config = {}
   try { config = JSON.parse(await readFile(options.configFile ?? join(home, 'config.json'), 'utf8')) }
   catch (error) { if (error.code !== 'ENOENT') throw error }
-  fields(config, ['allowedRoots', 'maxConcurrent', 'workspacePath'])
+  fields(config, ['allowedRoots', 'maxConcurrent', 'workspacePath', 'readAccess'])
+  let readAccess
+  if (config.readAccess !== undefined) {
+    fields(config.readAccess, ['workspaceIds', 'globalMemory', 'memoryDir', 'projectIds'])
+    const { workspaceIds, globalMemory, memoryDir, projectIds } = config.readAccess
+    const policy = validateReadPolicy({ workspaceIds, globalMemory })
+    if (typeof memoryDir !== 'string' || !isAbsolute(memoryDir)) throw new Error('readAccess.memoryDir must be an explicitly verified absolute memory root')
+    if (!projectIds || typeof projectIds !== 'object' || Array.isArray(projectIds) || Object.keys(projectIds).some(id => !policy.workspaceIds.includes(id)) || policy.workspaceIds.some(id => !Object.hasOwn(projectIds, id))) throw new Error('readAccess.projectIds must pin one memory project ID for each authorized workspace')
+    const memories = await createMemoryReader({ memoryDir, projectIds })
+    readAccess = new ReadAccess({ backend: { ...createSessionReader(ctx), memories }, policy })
+  }
   let workspace
   if (config.workspacePath !== undefined) {
     if (typeof config.workspacePath !== 'string' || !isAbsolute(config.workspacePath)) throw new Error('workspacePath must be an absolute existing directory')
@@ -36,10 +49,10 @@ export async function apply(ctx, options = {}) {
   const router = new Router({ runtime: createRuntime(ctx, { workspace }), stateDir: join(home, 'state'), allowedRoots: config.allowedRoots ?? [], maxConcurrent: config.maxConcurrent ?? 2 })
   await router.init()
   ctx.effect(() => () => router.close(), 'task-router.lifecycle')
-  ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: ROUTE, handler: createRpcHandler(router, { token }) }), 'task-router.rpc')
+  ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: ROUTE, handler: createRpcHandler(router, { token, readAccess }) }), 'task-router.rpc')
   ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: ROUTE + '/health', handler: async (req, res) => {
     if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress)) { res.writeHead(403); res.end(); return }
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
-    res.end(JSON.stringify({ ok: !router.closed && !router.lastPersistenceError, name, version: VERSION, configured_workspaces: router.roots.length }))
+    res.end(JSON.stringify({ ok: !router.closed && !router.lastPersistenceError, name, version: VERSION, configured_workspaces: router.roots.length, read_access_enabled: Boolean(readAccess) }))
   } }), 'task-router.health')
 }

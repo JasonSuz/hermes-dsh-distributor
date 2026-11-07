@@ -1,13 +1,13 @@
 {
   "name": "hermes-dsh-distributor",
   "repository": { "type": "git", "url": "https://github.com/JasonSuz/hermes-dsh-distributor.git" },
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Authenticated Hermes task dispatch with exact DSH model, reasoning effort and execution mode",
   "type": "module",
   "main": "./index.mjs",
   "exports": { ".": "./index.mjs", "./cordis.patch.yml": "./cordis.patch.yml" },
   "files": ["index.mjs", "src", "cordis.patch.yml", "README.md", "ACCEPTANCE.md"],
-  "scripts": { "test": "node --test", "check": "node --check index.mjs && node --check src/router.mjs && node --check src/runtime.mjs && node --check src/http.mjs" },
+  "scripts": { "test": "node --test", "check": "node --check index.mjs && node --check src/router.mjs && node --check src/runtime.mjs && node --check src/http.mjs && node --check src/read-access.mjs && node --check src/read-memory.mjs && node --check src/read-sessions.mjs && node --check src/read-tools.mjs" },
   "engines": { "node": ">=22.13.0" },
   "dsh": { "bundle": { "patch": "./cordis.patch.yml" } },
   "peerDependencies": {
